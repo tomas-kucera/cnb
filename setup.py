@@ -15,7 +15,7 @@ setup(
       'Topic :: Office/Business :: Financial :: Accounting',
       'Intended Audience :: Developers',
       'Intended Audience :: Financial and Insurance Industry',
-      'License :: MIT License',
+      'License :: OSI Approved :: MIT License',
       'Operating System :: OS Independent',
       'Programming Language :: Python',
       'Topic :: Software Development',
