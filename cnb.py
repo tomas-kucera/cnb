@@ -47,6 +47,7 @@ Compare with cnb-exchange-rate:
   Result of rate() is real rate (with regard to amount: 1,100,..).
   Today rates are cached for next use.
   convert(), convert_to() methods are added for exchange calculations.
+  Bonus methods worse(), modified() for some dependend calculations
   Exceptions are not re-raised.
   Not focused methods from cnb-exchange-rate remains here, but probably there will be no development in the future.
   But for methods which seek for average were added their clones which take regard to currency amount:
