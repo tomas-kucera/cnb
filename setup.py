@@ -1,0 +1,25 @@
+from distutils.core import setup
+setup(
+  name = 'cnb',
+  py_modules = ['cnb'],
+  version = '0.9',
+  description = 'Access current exchange rate and (short time) historical daily rates from the Czech National Bank.',
+  install_requires = ['six', 'pytz'],
+  author = 'Mirek Zvolsky',
+  author_email = 'zvolsky@seznam.cz',
+  url = 'https://github.com/zvolsky/cnb',
+  download_url = 'https://github.com/zvolsky/cnb/tarball/0.9',
+  keywords = ['currencies', 'rates', 'exchange', 'financial', 'money', 'cnb'],
+  classifiers=[
+      'Development Status :: 4 - Beta',
+      'Topic :: Office/Business :: Financial :: Accounting',
+      'Intended Audience :: Developers',
+      'Intended Audience :: Financial and Insurance Industry',
+      'License :: MIT License',
+      'Operating System :: OS Independent',
+      'Programming Language :: Python',
+      'Topic :: Software Development',
+      'Programming Language :: Python :: 2',
+      'Programming Language :: Python :: 3',
+  ],
+)
