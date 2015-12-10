@@ -84,8 +84,8 @@ def rate(currency, date=None):
     return apply_amount(result[0], result[1])
 
 def rate_tuple(currency, date=None):
-    """will return the rate for the reported amount of currency, today or for given date
-    [0] rate for amount, [1] amount, [2] exact date from the data obtained from the service
+    """will return the rate for the reported amount of currency (today or for given date) as tuple:
+    [0] rate for amount, [1] amount, [2] exact date from the data obtained from the service, [3] served from cache?
     """
     return _rate(currency, date)
 
@@ -95,7 +95,7 @@ def convert(amount, source, target='CZK', date=None, percent=0):
     you can calculate with regard to (given) date
     you can add additional margin with percent parameter
     """
-    if source == 'CZK':
+    if source.upper() == 'CZK':
         czk = amount
     else:
         czk = amount * rate(source, date)
@@ -107,7 +107,7 @@ def convert_to(target, amount, date=None, percent=0):
     you can calculate with regard to (given) date
     you can add additional margin with percent parameter
     """
-    if target == 'CZK':
+    if target.upper() == 'CZK':
         result = amount
     else:
         result = amount / rate(target, date)
@@ -147,9 +147,11 @@ def apply_amount(nrate, amount):
 
 def _rate(currency, date, cache={}):
     currency = currency.upper()
+    if currency == 'CZK':
+        return 1.0, 1.0, datetime.date.today(), False
 
     def from_cache():
-        return cached[0], cached[1], datetime.datetime.strptime(cache_key[:10], '%d.%m.%Y').date()
+        return cached[0], cached[1], datetime.datetime.strptime(cache_key[:10], '%d.%m.%Y').date(), True
 
     cacheable_if_over = True
     if date is None:
@@ -190,7 +192,7 @@ def _rate(currency, date, cache={}):
     if cacheable_if_over or len(cache) < SIZE_CACHE_OLDER:
         cache[key + currency] = nrate, amount
 
-    return nrate, amount, date_test
+    return nrate, amount, date_test, False
 
 def download(url):
     stream = urlopen(url)
