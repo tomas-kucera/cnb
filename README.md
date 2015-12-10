@@ -1,6 +1,10 @@
 # cnb
 Python lib using exchange rates from the Czech National Bank. Based on cnb-exchange-rate but focus is the work with current rate and historical daily rates (500 days).
 
+Status: Beta
+0.9.1 fixed FATAL: find rate before 14:30 (publishing in cnb); new: currencies allowed in lowercase too
+0.9   published
+
 Usage:
 ```
 import cnb

@@ -146,6 +146,8 @@ def apply_amount(nrate, amount):
         return nrate / amount
 
 def _rate(currency, date, cache={}):
+    currency = currency.upper()
+
     def from_cache():
         return cached[0], cached[1], datetime.datetime.strptime(cache_key[:10], '%d.%m.%Y').date()
 
@@ -176,7 +178,7 @@ def _rate(currency, date, cache={}):
     url = DAILY_URL % (host, currency, date_start, date_end)
     t = download_table(url, 0)
     amount = float(t['Mna: %s' % currency][0].split()[-1])
-    for test in xrange( + 1):
+    for test in xrange(DAYCNT + 1):
         date_test = date_ask - datetime.timedelta(days=test)
         key = date_test.strftime('%d.%m.%Y')
         if key in t:
@@ -214,14 +216,14 @@ def get_rate(t, key, index):   # called rate() in cnb-exchange-rate
     s = t[str(key)][index]
     return float(s.replace(',','.'))
 
-# --- other methods (without any change) from cnb-exchange-rate
+# --- other methods (without any change except of # **) from cnb-exchange-rate
 
 def set_host(h):
     global host
     host = h
 
 def average(currency, table_idx, year, value_idx):
-    url = URL % (host, currency)
+    url = URL % (host, currency.upper())               # ** here changed to .upper()
     t = download_table(url, table_idx)
     return get_rate(t, year, value_idx - 1)
 
