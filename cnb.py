@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 """Python lib to access exchange rates from the Czech National Bank.
+Fork of (PyPI) cnb-exchange-rate (MIT licensed).
+install_requires = ['six', 'pytz']
 
 Usage:
   import cnb
@@ -45,20 +47,26 @@ Compare with cnb-exchange-rate:
   Basic method rate() (cnb-exchange-rate: daily_rate()) can be called without date to get current rate.
   Not published dates include today and future dates are provided (if older one date exists).
   Result of rate() is real rate (with regard to amount: 1,100,..).
-  Today rates are cached for next use.
+  Rates are cached for next use. Cache and file cache can help if CNB service is unavailable.
+  With valid_max_days parameter you can set which cache results are valid if service call has failed.
   convert(), convert_to() methods are added for exchange calculations.
   Bonus methods worse(), modified() for some dependend calculations
-  Exceptions are not re-raised.
+  Exceptions are not re-raised (and not handled). In addition raises ValueError if rate cannot be found.
   Not focused methods from cnb-exchange-rate remains here, but probably there will be no development in the future.
   But for methods which seek for average were added their clones which take regard to currency amount:
             (monthly(), monthly_cumulative(), quarterly())
 """
 
-import datetime
 import csv
+import datetime
+import json
+import os
+import tempfile
 
 from pytz import timezone
 from six.moves.urllib.request import urlopen
+from six.moves import range
+
 
 host = 'www.cnb.cz'
 
@@ -70,57 +78,69 @@ QUARTERLY_AVERAGE_TABLE_IDX = 2
 FIELD_DELIMITER = '|'
 TABLE_DELIMITER = '\n\n'
 TABLE_ENCODING = 'UTF-8'
-DAYCNT = 8
+DAYCNT = 8                        # how many days back we will ask the rate (CNB doesn't publish rates on weekends,..)
 CACHE_YESTERDAY_BEFORE = '14:00'  # dd:mm (CNB updates the service at 14:30)
+OFFLINE_CACHE = True              # if service call fails then try caches (memory, tmp/_cnb_cache_.json)
+VALID_DAYS_MAX_DEFAULT = 60       # if service call fails, how many days different cache result is accepted as well
 SIZE_CACHE_OLDER = 500            # maximum items in cache (if more then only today rates will be appended)
 
+# do not change:
+CACHE_FILENAME = None             # first _get_filename() call will set this
+DATE_FORMAT = '%d.%m.%Y'          # used in URL and cache keys
 
 # --- preferred methods
 
-def rate(currency, date=None):
+def rate(currency, date=None, valid_days_max=None):
     """will return the rate for the currency today or for given date
+    valid_days_max is used only if service fails and this method try find something in cache
+        dates from cache will be used in range <date - valid_days_max; date + valid_days_max>
+        if valid_days_max is None (default), VALID_DAYS_MAX_DEFAULT is used instead
     """
-    result = _rate(currency, date)
+    result = _rate(currency, date, valid_days_max=valid_days_max)
     return apply_amount(result[0], result[1])
 
-def rate_tuple(currency, date=None):
+def rate_tuple(currency, date=None, valid_days_max=None):
     """will return the rate for the reported amount of currency (today or for given date) as tuple:
     [0] rate for amount, [1] amount, [2] exact date from the data obtained from the service, [3] served from cache?
+    valid_days_max: see rate()
     """
-    return _rate(currency, date)
+    return _rate(currency, date, valid_days_max=valid_days_max)
 
-def convert(amount, source, target='CZK', date=None, percent=0):
+def convert(amount, source, target='CZK', date=None, percent=0, valid_days_max=None):
     """without target parameter returns equivalent of amount+source in CZK
     with target parameter returns equivalent of amount+source in given currency
     you can calculate with regard to (given) date
     you can add additional margin with percent parameter
+    valid_days_max: see rate()
     """
     if source.upper() == 'CZK':
         czk = amount
     else:
-        czk = amount * rate(source, date)
-    result = convert_to(target, czk, date)
+        czk = amount * rate(source, date, valid_days_max=valid_days_max)
+    result = convert_to(target, czk, date, valid_days_max=valid_days_max)
     return modified(result, percent)
 
-def convert_to(target, amount, date=None, percent=0):
+def convert_to(target, amount, date=None, percent=0, valid_days_max=None):
     """will convert the amount in CZK into given currency (target)
     you can calculate with regard to (given) date
     you can add additional margin with percent parameter
+    valid_days_max: see rate()
     """
     if target.upper() == 'CZK':
         result = amount
     else:
-        result = amount / rate(target, date)
+        result = amount / rate(target, date, valid_days_max=valid_days_max)
     return modified(result, percent)
 
-def worse(src_amount, src_currency, target_amount_obtained, target_currency, date=None):
+def worse(src_amount, src_currency, target_amount_obtained, target_currency, date=None, valid_days_max=None):
     """will calculate a difference between the calculated target amount and the amount you give as src_amount
       if you will obtain target_amount_obtained instead
+    valid_days_max: see rate()
     returns a tuple: (percent, difference_src_currency, difference_target_currency)
     """
-    calculated = convert(src_amount, src_currency, target=target_currency, date=date)
+    calculated = convert(src_amount, src_currency, target=target_currency, date=date, valid_days_max=valid_days_max)
     worse = calculated - target_amount_obtained
-    worse_src = convert(worse, target_currency, target=src_currency, date=date)
+    worse_src = convert(worse, target_currency, target=src_currency, date=date, valid_days_max=valid_days_max)
     if src_amount:
         return worse_src / src_amount * 100.0, worse_src, worse
     elif not target_amount_obtained:
@@ -145,54 +165,112 @@ def apply_amount(nrate, amount):
     else:
         return nrate / amount
 
-def _rate(currency, date, cache={}):
+def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
     currency = currency.upper()
+    if valid_days_max is None:
+        valid_days_max = VALID_DAYS_MAX_DEFAULT
+    today = datetime.date.today()
     if currency == 'CZK':
-        return 1.0, 1.0, datetime.date.today(), False
+        return 1.0, 1.0, today, False
 
     def from_cache():
-        return cached[0], cached[1], datetime.datetime.strptime(cache_key[:10], '%d.%m.%Y').date(), True
+        return cached[0], cached[1], datetime.datetime.strptime(cache_key[:10], DATE_FORMAT).date(), True
 
-    cacheable_if_over = True
-    if date is None:
-        date_ask = datetime.date.today()
-    elif date >= datetime.date.today():
-        date_ask = min(date, datetime.date.today())
-    else:
+    if date and date < today:
         date_ask = date
-        cacheable_if_over = False
-    date_end = date_ask.strftime('%d.%m.%Y')
+        fcacheable = False
+    else:
+        date_ask = today
+        fcacheable = True
 
-    cache_key = date_end + currency
+    cache_key = date_ask.strftime(DATE_FORMAT) + currency
     cached = cache.get(cache_key)
     if cached:
         return from_cache()
     cache_yesterday = datetime.datetime.now(timezone('Europe/Prague')).strftime('%H:%M') < CACHE_YESTERDAY_BEFORE
     if cache_yesterday:
         yesterday = date_ask - datetime.timedelta(days=1)
-        cache_key = yesterday.strftime('%d.%m.%Y') + currency
+        cache_key = yesterday.strftime(DATE_FORMAT) + currency
         cached = cache.get(cache_key)
         if cached:
             return from_cache()
 
     date_start = date_ask - datetime.timedelta(days=DAYCNT)
-    date_start = date_start.strftime('%d.%m.%Y')
-    url = DAILY_URL % (host, currency, date_start, date_end)
-    t = download_table(url, 0)
-    amount = float(t['Mna: %s' % currency][0].split()[-1])
-    for test in xrange(DAYCNT + 1):
-        date_test = date_ask - datetime.timedelta(days=test)
-        key = date_test.strftime('%d.%m.%Y')
-        if key in t:
-            break
-    else:
-        raise ValueError('rate not found for currency %s (bad code, date too old, ..)' % currency)
-    nrate = get_rate(t, key, 0)
+    date_start = date_start.strftime(DATE_FORMAT)
+    url = DAILY_URL % (host, currency, date_start, date_ask.strftime(DATE_FORMAT))
+    try:
+        t = download_table(url, 0)
+        failed = False
+    except IOError:
+        failed = True
 
-    if cacheable_if_over or len(cache) < SIZE_CACHE_OLDER:
+    if not failed:
+        amount = float(t['Mna: %s' % currency][0].split()[-1])
+        for test in range(DAYCNT + 1):
+            date_test = date_ask - datetime.timedelta(days=test)
+            key = date_test.strftime(DATE_FORMAT)
+            if key in t:
+                break
+        else:
+            failed = True
+
+    if failed:
+        if OFFLINE_CACHE:
+            fcached = fcache.get(currency)
+            try:
+                if not fcached:     # try update it from file
+                    with open(_get_filename()) as cache_file:
+                        rf_cache = json.loads(cache_file.read())
+                        for k in rf_cache:
+                            if k not in fcache:
+                                fcache[k] = rf_cache[k]
+                    fcached = fcache.get(currency)
+                if fcached:
+                    fcache_date = datetime.datetime.strptime(fcached[2], DATE_FORMAT).date()
+            except Exception:
+                fcached = None
+            test_delta = valid_days_max + 1
+            if fcached:
+                delta = abs((date_ask - fcache_date).days)
+                if delta <= valid_days_max:
+                    test_delta = delta
+                else:
+                    fcached = False
+            # has memory cache any/better result?
+            for delta_days in range(test_delta):   # TODO: how to make this faster and less stupid?
+                tdelta = datetime.timedelta(days=delta_days)
+                test_key = (today - tdelta).strftime(DATE_FORMAT) + currency
+                cached = cache.get(test_key)
+                if cached:
+                    return from_cache()
+                if not delta_days:
+                    continue
+                test_key = (today + tdelta).strftime(DATE_FORMAT) + currency
+                cached = cache.get(test_key)
+                if cached:
+                    return from_cache()
+            if fcached:
+                return fcached[0], fcached[1], fcache_date, True
+        raise ValueError('rate not found for currency %s (bad code, date too old, offline/not cached, ..)' % currency)
+
+    nrate = get_rate(t, key, 0)
+    if fcacheable or len(cache) < SIZE_CACHE_OLDER:
         cache[key + currency] = nrate, amount
+        if fcacheable:
+            fcache[currency] = nrate, amount, today.strftime(DATE_FORMAT)
+            try:
+                with open(_get_filename(), mode='w') as cache_file:
+                    cache_file.write(json.dumps(fcache))
+            except IOError:
+                pass
 
     return nrate, amount, date_test, False
+
+def _get_filename():
+    global CACHE_FILENAME
+    if not CACHE_FILENAME:
+        CACHE_FILENAME = os.path.join(tempfile.gettempdir(), '_cnb_cache_.json')
+    return CACHE_FILENAME
 
 def download(url):
     stream = urlopen(url)
@@ -239,7 +317,7 @@ def quarterly_rate(currency, year, quarter):
     return average(currency, QUARTERLY_AVERAGE_TABLE_IDX, year, quarter)
 
 def daily_rate(currency, date):
-    date_str = date.strftime('%d.%m.%Y')
+    date_str = date.strftime(DATE_FORMAT)              # ** '%d.%m.%Y' changed to DATE_FORMAT
     url = DAILY_URL % (host, currency, date_str, date_str)
     t = download_table(url, 0)
     return get_rate(t, date_str, 0)
