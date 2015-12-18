@@ -20,15 +20,16 @@ Usage:
   today = date.today()
   monday = datetime.strptime('07.12.2015', '%d.%m.%Y').date()
   cnb.rate_tuple('USD')
-    (24.688, 1.0, datetime.date(2015, 12, 9))
+    (24.688, 1.0, datetime.date(2015, 12, 9), True, False)  # True: from cache because USD was used earlier
   cnb.rate_tuple('HUF', date=monday)
-    (8.629, 100.0, datetime.date(2015, 12, 4))   # 07.12.2015, before 14:00, query made
-    (8.629, 100.0, datetime.date(2015, 12, 4))   # 07.12.2015, before 14:00, from cache, see CACHE_YESTERDAY_BEFORE_HOUR
-    (8.629, 100.0, datetime.date(2015, 12, 4))   # 07.12.2015, before 14:30, query made
-    (8.666, 100.0, datetime.date(2015, 12, 7))   # 07.12.2015, after 14:30, query made
-    (8.666, 100.0, datetime.date(2015, 12, 7))   # 07.12.2015, after 14:30, from cache
+    (8.629, 100.0, datetime.date(2015, 12, 4), True, False)   # 07.12.2015, before 14:00, see CACHE_YESTERDAY_BEFORE_HOUR
+    (8.629, 100.0, datetime.date(2015, 12, 4), False, False)  # 07.12.2015, before 14:30, query made
+    (8.666, 100.0, datetime.date(2015, 12, 7), False, False)  # 07.12.2015, after 14:30, query made
+    (8.666, 100.0, datetime.date(2015, 12, 7), True, False)  # 07.12.2015, after 14:30, from cache
   cnb.rate('HUF', date=today - timedelta(days=359))
     0.08938
+  cnb.result_info('HUF')
+    (8.938, 100.0, datetime.date(2014, 12, 15), False, False)
   cnb.convert(1000, 'USD', 'HUF', date=today - timedelta(days=359))
     248277.02
   cnb.monthly_rate('HUF', 2015, 3)
@@ -87,7 +88,7 @@ SIZE_CACHE_OLDER = 500            # maximum items in cache (if more then only to
 # do not change:
 CACHE_FILENAME = None             # first _get_filename() call will set this
 DATE_FORMAT = '%d.%m.%Y'          # used in URL and cache keys
-RESULT_TUPLES = {}
+RESULT_INFO = {}
 
 
 # --- preferred methods
@@ -106,17 +107,17 @@ def rate_tuple(currency, date=None, valid_days_max=None):
     [0] rate for amount, [1] amount, [2] exact date from the data obtained from the service, [3] served from cache?,
         [4] True if service call was made but has failed
     valid_days_max: see rate()
-    instead of use rate_tuple(currency,..) you can call rate(currency,..) and resolve result_tuple(currency) later
+    instead of use rate_tuple(currency,..) you can call rate(currency,..) and resolve result_info(currency) later
     """
     return _rate(currency, date, valid_days_max=valid_days_max)
 
-def result_tuple(currency):
+def result_info(currency):
     """for previous call of rate(), rate_tuple(), convert(), convert_to() this will give same info tuple as rate_tuple()
     for worse() this works too, but because convert() is called twice, you will get bad info [3] served from cache?
     will return same result tuple as rate_tuple --or-- None if rate was not yet tested for the currency
-    example: convert(10, 'usd', 'eur') ; result_tuple('eur')[2] # get real publishing date of the rate for EUR
+    example: convert(10, 'usd', 'eur') ; result_info('eur')[2] # get real publishing date of the rate for EUR
     """
-    return RESULT_TUPLES.get(currency.upper())
+    return RESULT_INFO.get(currency.upper())
 
 def convert(amount, source, target='CZK', date=None, percent=0, valid_days_max=None):
     """without target parameter returns equivalent of amount+source in CZK
@@ -183,11 +184,11 @@ def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
         valid_days_max = VALID_DAYS_MAX_DEFAULT
     today = datetime.date.today()
     if currency == 'CZK':
-        RESULT_TUPLES['CZK'] = result = (1.0, 1.0, today, False, False)
+        RESULT_INFO['CZK'] = result = (1.0, 1.0, today, False, False)
         return result
 
     def from_cache(failed=False):
-        RESULT_TUPLES[currency] = result = (cached[0], cached[1],
+        RESULT_INFO[currency] = result = (cached[0], cached[1],
                                         datetime.datetime.strptime(cache_key[:10], DATE_FORMAT).date(), True, failed)
         return result
 
@@ -265,7 +266,7 @@ def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
                 if cached:
                     return from_cache(failed=True)
             if fcached:
-                RESULT_TUPLES[currency] = result = (fcached[0], fcached[1], fcache_date, True, True)
+                RESULT_INFO[currency] = result = (fcached[0], fcached[1], fcache_date, True, True)
                 return result
         raise ValueError('rate not found for currency %s (bad code, date too old, offline/not cached, ..)' % currency)
 
@@ -280,7 +281,7 @@ def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
             except IOError:
                 pass
 
-    RESULT_TUPLES[currency] = result = (nrate, amount, date_test, False, False)
+    RESULT_INFO[currency] = result = (nrate, amount, date_test, False, False)
     return result
 
 def _get_filename():
