@@ -87,6 +87,8 @@ SIZE_CACHE_OLDER = 500            # maximum items in cache (if more then only to
 # do not change:
 CACHE_FILENAME = None             # first _get_filename() call will set this
 DATE_FORMAT = '%d.%m.%Y'          # used in URL and cache keys
+RESULT_TUPLES = {}
+
 
 # --- preferred methods
 
@@ -101,10 +103,20 @@ def rate(currency, date=None, valid_days_max=None):
 
 def rate_tuple(currency, date=None, valid_days_max=None):
     """will return the rate for the reported amount of currency (today or for given date) as tuple:
-    [0] rate for amount, [1] amount, [2] exact date from the data obtained from the service, [3] served from cache?
+    [0] rate for amount, [1] amount, [2] exact date from the data obtained from the service, [3] served from cache?,
+        [4] True if service call was made but has failed
     valid_days_max: see rate()
+    instead of use rate_tuple(currency,..) you can call rate(currency,..) and resolve result_tuple(currency) later
     """
     return _rate(currency, date, valid_days_max=valid_days_max)
+
+def result_tuple(currency):
+    """for previous call of rate(), rate_tuple(), convert(), convert_to() this will give same info tuple as rate_tuple()
+    for worse() this works too, but because convert() is called twice, you will get bad info [3] served from cache?
+    will return same result tuple as rate_tuple --or-- None if rate was not yet tested for the currency
+    example: convert(10, 'usd', 'eur') ; result_tuple('eur')[2] # get real publishing date of the rate for EUR
+    """
+    return RESULT_TUPLES.get(currency.upper())
 
 def convert(amount, source, target='CZK', date=None, percent=0, valid_days_max=None):
     """without target parameter returns equivalent of amount+source in CZK
@@ -171,10 +183,13 @@ def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
         valid_days_max = VALID_DAYS_MAX_DEFAULT
     today = datetime.date.today()
     if currency == 'CZK':
-        return 1.0, 1.0, today, False
+        RESULT_TUPLES['CZK'] = result = (1.0, 1.0, today, False, False)
+        return result
 
-    def from_cache():
-        return cached[0], cached[1], datetime.datetime.strptime(cache_key[:10], DATE_FORMAT).date(), True
+    def from_cache(failed=False):
+        RESULT_TUPLES[currency] = result = (cached[0], cached[1],
+                                        datetime.datetime.strptime(cache_key[:10], DATE_FORMAT).date(), True, failed)
+        return result
 
     if date and date < today:
         date_ask = date
@@ -242,15 +257,16 @@ def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
                 test_key = (today - tdelta).strftime(DATE_FORMAT) + currency
                 cached = cache.get(test_key)
                 if cached:
-                    return from_cache()
+                    return from_cache(failed=True)
                 if not delta_days:
                     continue
                 test_key = (today + tdelta).strftime(DATE_FORMAT) + currency
                 cached = cache.get(test_key)
                 if cached:
-                    return from_cache()
+                    return from_cache(failed=True)
             if fcached:
-                return fcached[0], fcached[1], fcache_date, True
+                RESULT_TUPLES[currency] = result = (fcached[0], fcached[1], fcache_date, True, True)
+                return result
         raise ValueError('rate not found for currency %s (bad code, date too old, offline/not cached, ..)' % currency)
 
     nrate = get_rate(t, key, 0)
@@ -264,7 +280,8 @@ def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
             except IOError:
                 pass
 
-    return nrate, amount, date_test, False
+    RESULT_TUPLES[currency] = result = (nrate, amount, date_test, False, False)
+    return result
 
 def _get_filename():
     global CACHE_FILENAME
