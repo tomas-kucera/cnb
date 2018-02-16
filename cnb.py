@@ -193,9 +193,11 @@ def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
         return result
 
     if date and date < today:
+        cache_yesterday = False
         date_ask = date
         fcacheable = False
     else:
+        cache_yesterday = datetime.datetime.now(timezone('Europe/Prague')).strftime('%H:%M') < CACHE_YESTERDAY_BEFORE
         date_ask = today
         fcacheable = True
 
@@ -203,7 +205,7 @@ def _rate(currency, date, valid_days_max=None, cache={}, fcache={}):
     cached = cache.get(cache_key)
     if cached:
         return from_cache()
-    cache_yesterday = datetime.datetime.now(timezone('Europe/Prague')).strftime('%H:%M') < CACHE_YESTERDAY_BEFORE
+
     if cache_yesterday:
         yesterday = date_ask - datetime.timedelta(days=1)
         cache_key = yesterday.strftime(DATE_FORMAT) + currency
